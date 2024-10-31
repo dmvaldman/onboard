@@ -1,8 +1,11 @@
 import os
+import requests
+
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 from dotenv import load_dotenv
-from agents.agent import MessageHandler, ApplicationMessage
+from agents.agent import MessageHandler, ApplicationMessage, File
+from typing import List
 
 class SlackBot:
     def __init__(self, agent=None):
@@ -41,6 +44,32 @@ class SlackBot:
         elif channel_type in ["channel", "group", "mpim"]:
             self._handle_channel_message(event, say, client)
 
+    def _process_files(self, event, client) -> List[File]:
+        """Process files attached to a message"""
+        files = []
+        if not event.get("files"):
+            return files
+
+        file_data = event["files"]
+        for file in file_data:
+            # Get file info
+            file_info = client.files_info(file=file["id"])
+
+            # Download the file content using the private URL
+            response = requests.get(
+                file["url_private"],
+                headers={"Authorization": f"Bearer {os.getenv('SLACK_BOT_TOKEN')}"}
+            )
+            file_content = response.content
+
+            files.append(File(
+                url=file.get("url_private", ""),
+                name=file.get("name", ""),
+                filetype=file.get("filetype", ""),
+                content=file_content
+            ))
+        return files
+
     def handle_mention(self, event, say, client):
         """Handle @mentions of the bot"""
         channel_info = client.conversations_info(channel=event['channel'])
@@ -48,10 +77,14 @@ class SlackBot:
         user_info = client.users_info(user=event['user'])
         email = user_info['user']['profile']['email']
 
+        # Handle any files attached to the message
+        files = self._process_files(event, client)
+
         message = ApplicationMessage(
             user=email,
             text=event['text'],
-            application="Slack"
+            application="Slack",
+            files=files
         )
 
         response = self.message_handler.handle_message(message)
@@ -97,10 +130,14 @@ class SlackBot:
         user_info = client.users_info(user=event['user'])
         email = user_info['user']['profile']['email']
 
+        # Handle any files attached to the message
+        files = self._process_files(event, client)
+
         message = ApplicationMessage(
             user=email,
             text=event['text'],
-            application="Slack"
+            application="Slack",
+            files=files
         )
 
         response = self.message_handler.handle_message(message)
