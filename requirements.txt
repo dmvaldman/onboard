@@ -1,0 +1,7 @@
+slack-sdk
+python-dotenv
+slack-bolt
+openai
+google-api-python-client
+google-auth
+requests
