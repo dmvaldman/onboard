@@ -72,6 +72,8 @@ class SlackBot:
 
     def handle_mention(self, event, say, client):
         """Handle @mentions of the bot"""
+        self._send_ack(event, client)
+
         channel_info = client.conversations_info(channel=event['channel'])
 
         user_info = client.users_info(user=event['user'])
@@ -125,8 +127,25 @@ class SlackBot:
             raise ValueError("Handler must implement handle_message")
         self._message_handler = handler
 
+    def _send_ack(self, event, client):
+        # Respond with "watching" emoji
+        client.reactions_add(
+            channel=event['channel'],
+            name="eyes",
+            timestamp=event['ts']
+        )
+
     def _handle_dm(self, event, say, client):
         """Handle direct messages"""
+        self._send_ack(event, client)
+
+        # Respond with "watching" emoji
+        client.reactions_add(
+            channel=event['channel'],
+            name="eyes",
+            timestamp=event['ts']
+        )
+
         user_info = client.users_info(user=event['user'])
         email = user_info['user']['profile']['email']
 

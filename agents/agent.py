@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from typing import List, Dict, Protocol
 from dataclasses import dataclass, field
 
+load_dotenv('creds/.env', override=True)
 
 @dataclass
 class File:
@@ -25,8 +26,6 @@ class ApplicationMessage:
 class MessageHandler(Protocol):
     def handle_message(self, message: ApplicationMessage) -> str:
         pass
-
-load_dotenv('creds/.env')
 
 class Agent:
     def __init__(self, name, system_prompt, model="gpt-4o"):
@@ -101,7 +100,7 @@ class Agent:
                 if run_status.status == 'completed':
                     break
                 elif run_status.status == 'failed':
-                    return "Sorry, I encountered an error processing your request."
+                    return f"Sorry, I encountered an error processing your request:\n{run_status.error}"
                 time.sleep(1)
 
             # Get messages (newest first)
