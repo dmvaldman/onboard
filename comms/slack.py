@@ -8,7 +8,7 @@ from agents.agent import MessageHandler, ApplicationMessage, File
 from typing import List
 
 class SlackBot:
-    def __init__(self, agent=None):
+    def __init__(self):
         load_dotenv('creds/.env')
 
         self.app = App(
@@ -138,13 +138,6 @@ class SlackBot:
     def _handle_dm(self, event, say, client):
         """Handle direct messages"""
         self._send_ack(event, client)
-
-        # Respond with "watching" emoji
-        client.reactions_add(
-            channel=event['channel'],
-            name="eyes",
-            timestamp=event['ts']
-        )
 
         user_info = client.users_info(user=event['user'])
         email = user_info['user']['profile']['email']
