@@ -5,3 +5,4 @@ openai
 google-api-python-client
 google-auth
 requests
+notion-client
