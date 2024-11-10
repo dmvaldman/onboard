@@ -68,7 +68,26 @@ class SlackBot:
                 filetype=file.get("filetype", ""),
                 content=file_content
             ))
+
         return files
+
+    def upload_files(self, files, client):
+        # upload attachments
+        urls = []
+        for file in files:
+            filename = file["file_id"]
+
+            res = client.files_upload_v2(
+                file=file["content"],
+                filename=filename
+            )
+
+            if res.data and res.data.get('file'):
+                url = res.data['file'].get('url_private')
+                urls.append(url)
+
+        return urls
+
 
     def handle_mention(self, event, say, client):
         """Handle @mentions of the bot"""
@@ -89,8 +108,15 @@ class SlackBot:
             files=files
         )
 
-        response = self.message_handler.handle_message(message)
-        say(response)
+        text, images = self.message_handler.handle_message(message)
+        if images:
+            attachments = self.upload_files(images, client)
+        else:
+            attachments = None
+
+        formatted_msg = self._format_msg(text, attachments=attachments)
+
+        say(formatted_msg)
 
     def handle_app_home_opened(self, client, event):
         """Handle app home opened events"""
@@ -135,6 +161,35 @@ class SlackBot:
             timestamp=event['ts']
         )
 
+    def _format_msg(self, text, attachments=None):
+        blocks = [
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": text
+                }
+            }
+        ]
+
+        if attachments is not None:
+            for url in attachments:
+                # Add a divider before each image
+                blocks.append({
+                    "type": "divider"
+                })
+                # Use image block type instead of accessory
+                blocks.append({
+                    "type": "image",
+                    "image_url": url,
+                    "alt_text": "Generated image"
+                })
+
+        return {
+            "text": text,
+            "blocks": blocks
+        }
+
     def _handle_dm(self, event, say, client):
         """Handle direct messages"""
         self._send_ack(event, client)
@@ -152,8 +207,15 @@ class SlackBot:
             files=files
         )
 
-        response = self.message_handler.handle_message(message)
-        say(response)
+        text, images = self.message_handler.handle_message(message)
+        if images:
+            attachments = self.upload_files(images, client)
+        else:
+            attachments = None
+
+        formatted_msg = self._format_msg(text, attachments=attachments)
+
+        say(formatted_msg)
 
     def _handle_channel_message(self, event, say, client):
         """Handle messages in channels"""

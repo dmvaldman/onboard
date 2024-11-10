@@ -30,7 +30,7 @@ class MessageHandler(Protocol):
         pass
 
 class Agent:
-    def __init__(self, name, system_prompt, model="gpt-4o"):
+    def __init__(self, name, system_prompt, model="gpt-4o-mini"):
         self.client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 
         # Create or load assistant
@@ -44,6 +44,7 @@ class Agent:
         # Track threads per user
         self.threads: Dict[str, str] = {}
 
+        # TODO: this should be modular and external to the Agent class
         # Add Notion tool
         self.tool_maps = tool_maps_notion
         self.add_tools(tool_specs_notion)
@@ -101,6 +102,17 @@ class Agent:
         else:
             print("No tool outputs to submit.")
 
+    def process_attachment(self, content, thread_id, response, client) -> Dict:
+        file_id = content.image_file.file_id
+        response = client.files.with_raw_response.retrieve_content(file_id)
+        attachment = {
+            "type": content.type,
+            "file_id": file_id,
+            "content": response.content,
+            "thread_id": thread_id
+        }
+        return attachment
+
     def handle_message(self, message: ApplicationMessage) -> str:
         user_id = message.user
         content = message.text
@@ -144,6 +156,8 @@ class Agent:
 
                 if status == 'completed':
                     break
+                elif status == 'incomplete':
+                    return f"Sorry, I encountered an error processing your request:\n{run.incomplete_details}"
                 elif status == 'failed':
                     return f"Sorry, I encountered an error processing your request:\n{run.error}"
                 elif status == "requires_action" and run.required_action.type == 'submit_tool_outputs':
@@ -157,17 +171,23 @@ class Agent:
             )
 
             # Return the assistant's last response
+            response_text = ""
+            images = []
             for msg in messages.data:
-                if msg.role == "assistant":
-                    # Extract text from all content blocks
-                    response_text = ""
-                    for content in msg.content:
-                        if content.type == 'text':
-                            response_text += content.text.value
-                    return response_text if response_text else "No text response generated."
+                if msg.role != "assistant":
+                    continue
 
+                # Extract text from all content blocks
+                for content in msg.content:
+                    if content.type == 'text':
+                        # Collect text
+                        response_text += content.text.value
+                    elif content.type == 'image_file':
+                        image = self.process_attachment(content, thread_id, response_text, self.client)
+                        images.append(image)
+                response_text += "\n\n\n"
 
-            return "No response generated."
+            return response_text, images
 
         except Exception as e:
             print(f"Error in assistant response: {e}")
