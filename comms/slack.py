@@ -1,11 +1,23 @@
 import os
 import requests
+import time
 
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 from dotenv import load_dotenv
-from agents.agent import MessageHandler, ApplicationMessage, File
-from typing import List
+from agents.agent import MessageHandler
+from tools.employeeOS import ApplicationMessage
+from typing import List, Dict
+from dataclasses import dataclass, field
+
+
+@dataclass
+class File:
+    """Represents a file uploaded to Slack"""
+    url: str
+    name: str
+    filetype: str
+    content: bytes = field(repr=False)
 
 class SlackBot:
     def __init__(self):
@@ -71,23 +83,36 @@ class SlackBot:
 
         return files
 
-    def upload_files(self, files, client):
-        # upload attachments
+    def upload_files(self, files: List[Dict], client, max_retries=3) -> List[str]:
+        """Upload files to Slack and return URLs"""
         urls = []
         for file in files:
-            filename = file["file_id"]
+            try:
+                # Upload file
+                upload_response = client.files_upload_v2(
+                    file=file["content"],
+                    filename=file["file_id"]
+                )
 
-            res = client.files_upload_v2(
-                file=file["content"],
-                filename=filename
-            )
+                # Wait for file to be ready
+                for _ in range(max_retries):
+                    time.sleep(0.5)
 
-            if res.data and res.data.get('file'):
-                url = res.data['file'].get('url_private')
-                urls.append(url)
+                    try:
+                        # Get file info to verify it's ready
+                        file_info = client.files_info(file=upload_response["file"]["id"])
+                        if file_info["file"]["url_private"]:
+                            urls.append(file_info["file"]["url_private"])
+                            print(f"Successfully uploaded file: {file['file_id']}")
+                            break
+                    except Exception as e:
+                        print(f"File not ready yet, retrying... ({str(e)})")
+
+            except Exception as e:
+                print(f"Failed to upload file: {str(e)}")
+                continue
 
         return urls
-
 
     def handle_mention(self, event, say, client):
         """Handle @mentions of the bot"""
@@ -172,13 +197,10 @@ class SlackBot:
             }
         ]
 
-        if attachments is not None:
+        if attachments:
             for url in attachments:
                 # Add a divider before each image
-                blocks.append({
-                    "type": "divider"
-                })
-                # Use image block type instead of accessory
+                blocks.append({"type": "divider"})
                 blocks.append({
                     "type": "image",
                     "image_url": url,

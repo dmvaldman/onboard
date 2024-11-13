@@ -6,55 +6,41 @@ from openai import OpenAI
 from dotenv import load_dotenv
 from typing import List, Dict, Protocol
 from dataclasses import dataclass, field
-from tools.notion import tool_specs as tool_specs_notion, tool_maps as tool_maps_notion
 
 load_dotenv('creds/.env', override=True)
 
 @dataclass
 class File:
-    """Represents a file uploaded to Slack"""
-    url: str
     name: str
     filetype: str
     content: bytes = field(repr=False)
 
 @dataclass
-class ApplicationMessage:
+class Message:
     text: str
-    user: str
-    application: str
     files: List[File] = field(default_factory=list)
 
 class MessageHandler(Protocol):
-    def handle_message(self, message: ApplicationMessage) -> str:
+    def handle_message(self, message: Message) -> str:
         pass
 
-class Agent:
-    def __init__(self, name, system_prompt, model="gpt-4o-mini"):
+class Agent(MessageHandler):
+    def __init__(self, name, instructions, model="gpt-4o-mini"):
         self.client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 
         # Create or load assistant
         self.assistant = self.client.beta.assistants.create(
             name=name,
-            instructions=system_prompt,
+            instructions=instructions,
             tools=[{"type": "code_interpreter"}],
             model=model
         )
 
+        self.name = name
+        self.instructions = instructions
+
         # Track threads per user
-        self.threads: Dict[str, str] = {}
-
-        # TODO: this should be modular and external to the Agent class
-        # Add Notion tool
-        self.tool_maps = tool_maps_notion
-        self.add_tools(tool_specs_notion)
-
-    def add_tools(self, tool_specs: List[Dict]):
-        """Add a tool to the assistant"""
-        self.assistant = self.client.beta.assistants.update(
-            assistant_id=self.assistant.id,
-            tools=self.assistant.tools + tool_specs
-        )
+        self.thread_id = None
 
     def add_files(self, files):
         """Upload files to the assistant"""
@@ -76,83 +62,55 @@ class Agent:
                 }
             })
 
-    def run_tool(self, run, thread_id, tool_maps):
-        tool_outputs = []
-        for tool in run.required_action.submit_tool_outputs.tool_calls:
-            if tool.function.name in tool_maps:
-                tool_function = tool_maps[tool.function.name]
-                args = json.loads(tool.function.arguments)
-                output = tool_function(**args)
-                tool_outputs.append({
-                    "tool_call_id": tool.id,
-                    "output": str(output)
-                })
-            else:
-                print(f"Tool {tool.function.name} not found in tool maps.")
+        return file_ids
 
-        try:
-            self.client.beta.threads.runs.submit_tool_outputs_and_poll(
-                thread_id=thread_id,
-                run_id=run.id,
-                tool_outputs=tool_outputs
-            )
-            print("Tool outputs submitted successfully.")
-        except Exception as e:
-            print("Failed to submit tool outputs:", e)
-        else:
-            print("No tool outputs to submit.")
+    def process_attachment(self, file_id) -> Dict:
+        res = self.client.files.with_raw_response.retrieve_content(file_id)
 
-    def process_attachment(self, content, thread_id, response, client) -> Dict:
-        file_id = content.image_file.file_id
-        response = client.files.with_raw_response.retrieve_content(file_id)
-        attachment = {
-            "type": content.type,
+        return {
             "file_id": file_id,
-            "content": response.content,
-            "thread_id": thread_id
+            "content": res.content
         }
-        return attachment
 
-    def handle_message(self, message: ApplicationMessage) -> str:
-        user_id = message.user
+    def handle_message(self, message: Message) -> tuple[str, List]:
         content = message.text
 
+        print(f'{self.name} received message: "{content}"')
+
         try:
-            # Upload any files first
-            if message.files:
-                self.add_files(message.files)
+            # # Upload any files first
+            # if message.files:
+            #     self.add_files(message.files)
 
             # Create thread with just the text message
-            if user_id not in self.threads:
+            if self.thread_id is None:
                 thread = self.client.beta.threads.create(
                     messages=[{"role": "user", "content": content}]
                 )
-                self.threads[user_id] = thread.id
+                self.thread_id = thread.id
             else:
                 # Add message to existing thread
                 self.client.beta.threads.messages.create(
-                    thread_id=self.threads[user_id],
+                    thread_id=self.thread_id,
                     role="user",
                     content=content
                 )
 
-            thread_id = self.threads[user_id]
-
             # Run the assistant
             run = self.client.beta.threads.runs.create(
-                thread_id=thread_id,
+                thread_id=self.thread_id,
                 assistant_id=self.assistant.id
             )
 
             # Wait for completion
             while True:
                 run = self.client.beta.threads.runs.retrieve(
-                    thread_id=thread_id,
+                    thread_id=self.thread_id,
                     run_id=run.id
                 )
 
                 status = run.status
-                print(f"Run status: {status}")
+                print(f"Run status for {self.name}: {status}")
 
                 if status == 'completed':
                     break
@@ -160,20 +118,18 @@ class Agent:
                     return f"Sorry, I encountered an error processing your request:\n{run.incomplete_details}"
                 elif status == 'failed':
                     return f"Sorry, I encountered an error processing your request:\n{run.error}"
-                elif status == "requires_action" and run.required_action.type == 'submit_tool_outputs':
-                    self.run_tool(run, thread_id, self.tool_maps)
 
                 time.sleep(1)
 
             # Get messages (newest first)
             messages = self.client.beta.threads.messages.list(
-                thread_id=thread_id,
+                thread_id=self.thread_id,
             )
 
             # Return the assistant's last response
             response_text = ""
-            images = []
-            for msg in messages.data:
+            attachments = []
+            for msg in reversed(messages.data):
                 if msg.role != "assistant":
                     continue
 
@@ -183,30 +139,44 @@ class Agent:
                         # Collect text
                         response_text += content.text.value
                     elif content.type == 'image_file':
-                        image = self.process_attachment(content, thread_id, response_text, self.client)
-                        images.append(image)
+                        file_id = content.image_file.file_id
+                        attachment = self.process_attachment(file_id)
+                        attachments.append(attachment)
                 response_text += "\n\n\n"
 
-            return response_text, images
+            return response_text, attachments
 
         except Exception as e:
-            print(f"Error in assistant response: {e}")
+            print(f"Error in {self.name} assistant response: {e}")
             return f"Sorry, I encountered an error: {str(e)}"
 
     def reset_conversation(self, user_id: str):
         """Start a new thread for the user"""
-        if user_id in self.threads:
-            # Create new thread
-            thread = self.client.beta.threads.create()
-            self.threads[user_id] = thread.id
+        # Create new thread
+        thread = self.client.beta.threads.create()
+        self.thread_id = thread.id
 
 
 if __name__ == "__main__":
-    agent = Agent("AI Analyst", "I am an senior data analyst here to help you answer questions.")
+    agent = Agent(
+        "AI Analyst",
+        "I am an senior data analyst here to help you answer questions."
+    )
 
-    user_id = "Dave"
-    content = "What is 1+1?"
-    application = "Slack"
-    message = ApplicationMessage(content, user_id, application)
+    # Create ApplicationMessage with file attachment from assets/dataset.csv
+    with open("assets/dataset.csv", "rb") as f:
+        file = File(
+            name="dataset.csv",
+            filetype="csv",
+            content=f.read()
+        )
 
-    print(agent.handle_message(message))
+    file_ids = agent.add_files([file])
+
+    msg = Message(
+        text="Please analyze this CSV and report any trends or anomalous behavior",
+        files=[file]
+    )
+
+    response = agent.handle_message(msg)
+    print(response)
