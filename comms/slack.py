@@ -83,7 +83,7 @@ class SlackBot:
 
         return files
 
-    def upload_files(self, files: List[Dict], client, max_retries=3) -> List[str]:
+    def upload_files(self, files: List[Dict], client, max_retries=5) -> List[str]:
         """Upload files to Slack and return URLs"""
         urls = []
         for file in files:
@@ -94,19 +94,28 @@ class SlackBot:
                     filename=file["file_id"]
                 )
 
-                # Wait for file to be ready
-                for _ in range(max_retries):
-                    time.sleep(0.5)
+                # Get initial file data
+                file_data = upload_response.get('file')
+                if not file_data:
+                    print(f"No file data received for {file['file_id']}")
+                    continue
 
-                    try:
-                        # Get file info to verify it's ready
-                        file_info = client.files_info(file=upload_response["file"]["id"])
-                        if file_info["file"]["url_private"]:
-                            urls.append(file_info["file"]["url_private"])
-                            print(f"Successfully uploaded file: {file['file_id']}")
-                            break
-                    except Exception as e:
-                        print(f"File not ready yet, retrying... ({str(e)})")
+                # Wait for file to be fully processed
+                attempts = 0
+                while not file_data.get('mimetype'):
+                    attempts += 1
+                    if attempts >= max_retries:
+                        print(f"Gave up waiting for file {file['file_id']} after {attempts} seconds")
+                        break
+
+                    time.sleep(1)
+                    file_info = client.files_info(file=file_data['id'])
+                    file_data = file_info.get('file')
+                    print(f"Waiting for file {file['file_id']}, attempt {attempts}")
+
+                if file_data.get('mimetype'):
+                    print(f"File ready after {attempts}s: {file['file_id']}")
+                    urls.append(file_data['url_private'])
 
             except Exception as e:
                 print(f"Failed to upload file: {str(e)}")
@@ -133,7 +142,11 @@ class SlackBot:
             files=files
         )
 
-        text, images = self.message_handler.handle_message(message)
+        try:
+            text, images = self.message_handler.handle_message(message)
+        except Exception as e:
+            print(f"Error in message handler: {str(e)}")
+
         if images:
             attachments = self.upload_files(images, client)
         else:
@@ -229,7 +242,11 @@ class SlackBot:
             files=files
         )
 
-        text, images = self.message_handler.handle_message(message)
+        try:
+            text, images = self.message_handler.handle_message(message)
+        except Exception as e:
+            print(f"Error in message handler: {str(e)}")
+
         if images:
             attachments = self.upload_files(images, client)
         else:
