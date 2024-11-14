@@ -17,7 +17,7 @@ load_dotenv('creds/.env', override=True)
 @dataclass
 class Message:
     text: str
-    files: List[File] = field(default_factory=list)
+    files: List[str] = field(default_factory=list)
 
 @dataclass
 class ApplicationMessage():
@@ -30,35 +30,21 @@ tool_spec_agent = [{
     "type": "function",
     "function": {
         "name": "chat_with_agent",
-        "description": "Delegate a task to AI Analyst by providing a description. Forward their analysis to the user verbatim. Any files created by the AI Analyst will be attached to your response automatically.",
+        "description": "Delegate a task to AI Analyst by providing a description and any necessary files.",
         "parameters": {
             "type": "object",
             "properties": {
                 "text": {
                     "type": "string",
-                    "description": "The text of the message."
+                    "description": "The description of the task."
                 },
                 "files": {
                     "type": "array",
                     "items": {
-                        "type": "object",
-                        "properties": {
-                            "name": {
-                                "type": "string",
-                                "description": "The name of the file."
-                            },
-                            "filetype": {
-                                "type": "string",
-                                "description": "The filetype of the file."
-                            },
-                            "content": {
-                                "type": "string",
-                                "description": "The content of the file."
-                            }
-                        },
-                        "required": ["name", "filetype", "content"],
-                        "additionalProperties": False
-                    }
+                        "type": "string",
+                        "description": "File ID"
+                    },
+                    "description": "File IDs"
                 }
             },
             "required": ["text"],
@@ -68,26 +54,22 @@ tool_spec_agent = [{
 }]
 
 class EmployeeOS(MessageHandler):
-    def __init__(self, agent, model="gpt-4o-mini"):
+    def __init__(self, agent, model="gpt-4o-mini", force=False):
         self.client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 
-        instructions = f"""I am an generalist assistant here to help you with your work.
-        I have access to various tools like Notion, Slack, and more.
-        Whenever work is better performed by a specialist, I delegate to them and forward their response back to the user.
-        Files sent to me are not stored by me but are sent to the specialists for analysis."""
-
-        # Create or load assistant
-        self.assistant = self.client.beta.assistants.create(
-            name="Employee",
-            instructions=instructions,
-            tools=[{"type": "code_interpreter"}],
-            model=model
-        )
+        instructions = f"""You are a generalist employee.
+        You have access to various communication tools like Notion and Slack.
+        You have access to an AI Analyst for any analytical work.
+        Delegate any analytical work to your AI Analyst and forward their response back to the user verbatim.
+        Do not provide any links to any attached files, file attaching will be handled by a separate system."""
 
         self.agent = agent
         self.name = "Employee"
         self.instructions = instructions
         self.agent_attachments = []
+
+        # Create or load assistant
+        self.assistant = self.create_assistant(self.name, instructions, model=model, force=force)
 
         # Track threads per user
         self.threads: Dict[str, str] = {}
@@ -100,6 +82,21 @@ class EmployeeOS(MessageHandler):
         self.tool_maps = tool_maps
         self.add_tools(tools)
 
+    def create_assistant(self, name, instructions, model="gpt-4o-mini", force=False):
+        # Create or load assistant if name already exists
+        # if not force:
+        #     assistants = self.client.beta.assistants.list(limit=100).data
+        #     for assistant in assistants:
+        #         if assistant.name == name:
+        #             return assistant
+
+        return self.client.beta.assistants.create(
+            name="Employee",
+            instructions=instructions,
+            tools=[{"type": "code_interpreter"}, {"type": "file_search"}],
+            model=model
+        )
+
     def add_tools(self, tool_specs: List[Dict]):
         """Add a tool to the assistant"""
         self.assistant = self.client.beta.assistants.update(
@@ -107,41 +104,44 @@ class EmployeeOS(MessageHandler):
             tools=self.assistant.tools + tool_specs
         )
 
-    def add_files(self, files, thread_id):
+    def add_files(self, files: List[File], thread_id):
         """Upload files to the assistant"""
-        try:
-            file_ids = self.agent.add_files(files)
-
-            self.client.beta.threads.messages.create(
-                thread_id=thread_id,
-                role="user",
-                content=f"<log start> Files {file_ids} successfully uploaded to {self.agent.name}. <log end>"
+        file_ids = []
+        for file in files:
+            uploaded_file = self.client.files.create(
+                file=file.content,
+                purpose='assistants'
             )
+            file_ids.append({"id": uploaded_file.id, "name": file.name})
 
-            print(f"Files {file_ids} successfully uploaded to {self.agent.name}.")
+        # try:
+        #     file_ids = self.agent.add_files(files)
 
-        except Exception as e:
-            print(f"Error uploading files: {e}")
+        self.client.beta.threads.messages.create(
+            thread_id=thread_id,
+            role="user",
+            content=f"<log start> Files {file_ids} successfully uploaded. <log end>"
+        )
+
+        print(f"<log start> Files {file_ids} successfully uploaded. <log end>")
+        # except Exception as e:
+        #     print(f"Error uploading files: {e}")
+
+        return file_ids
 
     def chat_with_agent(self, **kwargs) -> tuple([str, List]):
         message = Message(**kwargs)
+
+        if message.files:
+            self.agent.add_files(message.files)
+
         response_text, attachments = self.agent.handle_message(message)
-
-        print(f"Agent attachments: {[a['file_id'] for a in attachments]}")
-
         self.agent_attachments.extend(attachments)
 
-        # upload attachments to the assistant
-        file_ids = []
-        for attachment in attachments:
-            uploaded_file = self.client.files.create(
-                file=attachment['content'],
-                purpose='assistants'
-            )
-            file_ids.append(uploaded_file.id)
-
-        response_text = "<log start> {self.agent.name} Analysis: <log end>\n\n" + response_text
-        response_text += f"<log start> Received the following images from {self.agent.name}: {[file_id for file_id in file_ids]} <log end>"
+        if attachments:
+            response_text += "Attachments (These will be automatically sent to the user in your followup reply. Do not reference these.):"
+            for attachment in attachments:
+                response_text += f"\n{attachment['file_id']}"
 
         return response_text
 
@@ -151,7 +151,7 @@ class EmployeeOS(MessageHandler):
             if tool.function.name in self.tool_maps:
                 tool_function = self.tool_maps[tool.function.name]
                 args = json.loads(tool.function.arguments)
-                print(f"{self.name} - Calling {tool.function.name} (tool_id {tool.id}) with args: {args}")
+                print(f"{self.name} - Calling `{tool.function.name}` (tool_id {tool.id}) with args: {args}")
 
                 output = tool_function(**args)
                 print(f"{self.name} - Output: {output}")
@@ -171,20 +171,17 @@ class EmployeeOS(MessageHandler):
                     tool_outputs=tool_outputs
                 )
                 print("Tool outputs submitted successfully.")
-
-                response_text = tool_outputs[0]["output"]
-                self.client.beta.threads.messages.create(
-                    thread_id=thread_id,
-                    role="user",
-                    content=response_text
-                )
             except Exception as e:
                 print("Failed to submit tool outputs:", e)
         else:
             print("No tool outputs to submit.")
 
     def process_attachment(self, file_id) -> Dict:
-        response = self.client.files.with_raw_response.retrieve_content(file_id)
+        try:
+            response = self.client.files.with_raw_response.retrieve_content(file_id)
+        except Exception as e:
+            print(f"Error retrieving file {file_id}: {e}")
+
         attachment = {
             "file_id": file_id,
             "content": response.content
@@ -201,7 +198,10 @@ class EmployeeOS(MessageHandler):
             # Create thread with just the text message
             if user_id not in self.threads:
                 thread = self.client.beta.threads.create(
-                    messages=[{"role": "user", "content": content}]
+                    messages=[{
+                        "role": "user",
+                        "content": content
+                    }]
                 )
                 self.threads[user_id] = thread.id
             else:
@@ -237,9 +237,9 @@ class EmployeeOS(MessageHandler):
                 if status == 'completed':
                     break
                 elif status == 'incomplete':
-                    return f"Sorry, I encountered an error processing your request:\n{run.incomplete_details}"
+                    raise Exception(f"Status {status}. I encountered an error processing your request:\n{run.incomplete_details}")
                 elif status == 'failed':
-                    return f"Sorry, I encountered an error processing your request:\n{run.error}"
+                    raise Exception(f"Status {status}. I encountered an error processing your request:\n{run.error}")
                 elif status == "requires_action" and run.required_action.type == 'submit_tool_outputs':
                     self.run_tool(run, thread_id)
 
@@ -307,4 +307,4 @@ if __name__ == "__main__":
         files=[file])
 
     response, attachments = employee.handle_message(msg)
-    print(response)
+    print('\n-----------------\n\nFinal Response:\n\n', response)

@@ -4,7 +4,7 @@ import json
 
 from openai import OpenAI
 from dotenv import load_dotenv
-from typing import List, Dict, Protocol
+from typing import List, Dict, Protocol, Union
 from dataclasses import dataclass, field
 
 load_dotenv('creds/.env', override=True)
@@ -25,16 +25,11 @@ class MessageHandler(Protocol):
         pass
 
 class Agent(MessageHandler):
-    def __init__(self, name, instructions, model="gpt-4o-mini"):
+    def __init__(self, name, instructions, model="gpt-4o-mini", force=False):
         self.client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
 
         # Create or load assistant
-        self.assistant = self.client.beta.assistants.create(
-            name=name,
-            instructions=instructions,
-            tools=[{"type": "code_interpreter"}],
-            model=model
-        )
+        self.assistant = self.create_assistant(name, instructions, model=model, force=force)
 
         self.name = name
         self.instructions = instructions
@@ -42,15 +37,36 @@ class Agent(MessageHandler):
         # Track threads per user
         self.thread_id = None
 
-    def add_files(self, files):
+    def create_assistant(self, name, instructions, model="gpt-4o-mini", force=False):
+        # if not force:
+        #     assistants = self.client.beta.assistants.list(limit=100).data
+        #     for assistant in assistants:
+        #         if assistant.name == name:
+        #             return assistant
+
+        return self.client.beta.assistants.create(
+            name=name,
+            instructions=instructions,
+            tools=[{"type": "code_interpreter"}],
+            model=model
+        )
+
+    def add_files(self, files: List[Union[File, str]]) -> List[str]:
         """Upload files to the assistant"""
-        file_ids = []
-        for file in files:
-            uploaded_file = self.client.files.create(
-                file=file.content,
-                purpose='assistants'
-            )
-            file_ids.append(uploaded_file.id)
+
+        # If files are File objects, upload them
+        if isinstance(files[0], File):
+            file_ids = []
+            for file in files:
+                uploaded_file = self.client.files.create(
+                    file=file.content,
+                    purpose='assistants'
+                )
+                file_ids.append(uploaded_file.id)
+
+        else:
+            # Assume files are already uploaded
+            file_ids = files
 
         # Update the assistant's code interpreter with the new files
         self.assistant = self.client.beta.assistants.update(
