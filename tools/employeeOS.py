@@ -154,7 +154,7 @@ class EmployeeOS(MessageHandler):
                 print(f"{self.name} - Calling `{tool.function.name}` (tool_id {tool.id}) with args: {args}")
 
                 output = tool_function(**args)
-                print(f"{self.name} - Output: {output}")
+                # print(f"{self.name} - Output: {output}")
 
                 tool_outputs.append({
                     "tool_call_id": tool.id,
@@ -188,35 +188,77 @@ class EmployeeOS(MessageHandler):
         }
         return attachment
 
-    def handle_message(self, message: ApplicationMessage) -> str:
-        user_id = message.user
-        content = message.text
+    def parse_messages(self, messages) -> tuple([str, List]):
+        """Parse messages from the assistant"""
+        response_text = ""
+        attachments = []
+        for msg in messages.data:
+            if msg.role != "assistant":
+                continue
+
+            # Extract text from all content blocks
+            for content in msg.content:
+                if content.type == 'text':
+                    # Collect text
+                    response_text += content.text.value
+                elif content.type == 'image_file':
+                    file_id = content.image_file.file_id
+                    attachment = self.process_attachment(file_id)
+                    attachments.append(attachment)
+            response_text += "\n\n\n"
+
+        return response_text, attachments
+
+    def print_messages(self, messages):
+        # Define ANSI color codes
+        COLORS = {
+            "user": "\033[92m",       # Green
+            "assistant": "\033[94m",  # Blue
+            "system": "\033[93m",     # Yellow
+            "tool": "\033[95m"        # Magenta
+        }
+        RESET = "\033[0m"  # Reset color
+
+        ROLES = {
+            "user": "slack",
+            "assistant": self.name,
+            "system": "System",
+            "tool": "Tool"
+        }
+
+        print(f'{self.name} Messages:')
+        for msg in messages.data:
+            color = COLORS.get(msg.role, "")  # Default to no color if role not found
+            role = ROLES.get(msg.role, msg.role).upper()
+            for content in msg.content:
+                if content.type == 'text':
+                    print(f"{color}{role}: {content.text.value}{RESET}")
+                elif content.type == 'image_file':
+                    print(f"{color}{role}: Attachment: {content.image_file.file_id}{RESET}")
+
+    def handle_message(self, appMessage: ApplicationMessage) -> str:
+        user_id = appMessage.user
+        content = appMessage.text
 
         print(f'{self.name} received message from {user_id}: "{content}"')
+
+        message = {"role": "user", "content": content}
 
         try:
             # Create thread with just the text message
             if user_id not in self.threads:
-                thread = self.client.beta.threads.create(
-                    messages=[{
-                        "role": "user",
-                        "content": content
-                    }]
-                )
+                thread = self.client.beta.threads.create(messages=[message])
                 self.threads[user_id] = thread.id
             else:
-                # Add message to existing thread
                 self.client.beta.threads.messages.create(
                     thread_id=self.threads[user_id],
-                    role="user",
-                    content=content
-                )
+                    **message)
 
             thread_id = self.threads[user_id]
 
             # Upload any files
-            if message.files:
-                self.add_files(message.files, thread_id)
+            if appMessage.files:
+                self.add_files(appMessage.files, thread_id)
 
             # Run the assistant
             run = self.client.beta.threads.runs.create(
@@ -248,33 +290,17 @@ class EmployeeOS(MessageHandler):
             # Get messages (newest first)
             messages = self.client.beta.threads.messages.list(
                 thread_id=thread_id,
+                order="asc"
             )
 
-            # Return the assistant's last response
-            response_text = ""
-            images = []
-            for msg in reversed(messages.data):
-                if msg.role != "assistant":
-                    continue
-
-                # Extract text from all content blocks
-                for content in msg.content:
-                    if content.type == 'text':
-                        # Collect text
-                        response_text += content.text.value
-                    elif content.type == 'image_file':
-                        file_id = content.image_file.file_id
-                        image = self.process_attachment(file_id)
-                        images.append(image)
-                response_text += "\n\n\n"
+            self.print_messages(messages)
+            response_text, attachments = self.parse_messages(messages)
 
             # Add any attachments from the agent
             while self.agent_attachments:
-                images.append(self.agent_attachments.pop())
+                attachments.append(self.agent_attachments.pop())
 
-            print(f"{self.name} response: {response_text}")
-
-            return response_text, images
+            return response_text, attachments
 
         except Exception as e:
             print(f"Error in {self.name} assistant response: {e}")

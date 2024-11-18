@@ -88,6 +88,54 @@ class Agent(MessageHandler):
             "content": res.content
         }
 
+    def parse_messages(self, messages) -> tuple([str, List]):
+        """Parse messages from the assistant"""
+        response_text = ""
+        attachments = []
+        for msg in messages.data:
+            if msg.role != "assistant":
+                continue
+
+            # Extract text from all content blocks
+            for content in msg.content:
+                if content.type == 'text':
+                    # Collect text
+                    response_text += content.text.value
+                elif content.type == 'image_file':
+                    file_id = content.image_file.file_id
+                    attachment = self.process_attachment(file_id)
+                    attachments.append(attachment)
+            response_text += "\n\n\n"
+
+        return response_text, attachments
+
+    def print_messages(self, messages):
+        # Define ANSI color codes
+        COLORS = {
+            "user": "\033[92m",       # Green
+            "assistant": "\033[94m",  # Blue
+            "system": "\033[93m",     # Yellow
+            "tool": "\033[95m"        # Magenta
+        }
+        RESET = "\033[0m"  # Reset color
+
+        ROLES = {
+            "user": "Employee",
+            "assistant": self.name,
+            "system": "System",
+            "tool": "Tool"
+        }
+
+        print(f'{self.name} Messages:')
+        for msg in messages.data:
+            color = COLORS.get(msg.role, "")  # Default to no color if role not found
+            role = ROLES.get(msg.role, msg.role).upper()
+            for content in msg.content:
+                if content.type == 'text':
+                    print(f"{color}{role}: {content.text.value}{RESET}")
+                elif content.type == 'image_file':
+                    print(f"{color}{role}: Attachment: {content.image_file.file_id}{RESET}")
+
     def handle_message(self, message: Message) -> tuple[str, List]:
         content = message.text
 
@@ -140,26 +188,13 @@ class Agent(MessageHandler):
             # Get messages (newest first)
             messages = self.client.beta.threads.messages.list(
                 thread_id=self.thread_id,
+                order="desc"
             )
 
-            # Return the assistant's last response
-            response_text = ""
-            attachments = []
-            for msg in reversed(messages.data):
-                if msg.role != "assistant":
-                    continue
+            self.print_messages(messages)
+            response_text, attachments = self.parse_messages(messages)
 
-                # Extract text from all content blocks
-                for content in msg.content:
-                    if content.type == 'text':
-                        # Collect text
-                        response_text += content.text.value
-                    elif content.type == 'image_file':
-                        file_id = content.image_file.file_id
-                        attachment = self.process_attachment(file_id)
-                        attachments.append(attachment)
-                response_text += "\n\n\n"
-
+            # return "I had trouble reading the CSV file, can you resent?", []
             return response_text, attachments
 
         except Exception as e:
