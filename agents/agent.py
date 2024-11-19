@@ -11,8 +11,10 @@ load_dotenv('creds/.env', override=True)
 
 @dataclass
 class File:
-    name: str
-    filetype: str
+    id: str = None
+    url: str = None
+    name: str = None
+    filetype: str = None
     content: bytes = field(repr=False)
 
 @dataclass

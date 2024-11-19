@@ -8,6 +8,7 @@ from openai import OpenAI
 from dotenv import load_dotenv
 from typing import List, Dict, Protocol
 from dataclasses import dataclass, field
+from utils.imgur import file_upload as file_upload_imgur
 
 from agents.agent_autogen import Agent, File, MessageHandler
 from tools.notion import tool_specs as tool_specs_notion, tool_maps as tool_maps_notion
@@ -57,6 +58,7 @@ tool_spec_agent = [{
     }
 }]
 
+
 class EmployeeOS(GPTAssistantAgent):
     def __init__(self, agent):
 
@@ -80,7 +82,7 @@ class EmployeeOS(GPTAssistantAgent):
                 Delegate any analytical work to your AI Analyst.""",
             llm_config=llm_config,
             assistant_config=assistant_config,
-            verbose=True,)
+            verbose=True)
 
         self.agent = agent
         self.agent_attachments = []
@@ -118,21 +120,46 @@ class EmployeeOS(GPTAssistantAgent):
 
         return file_ids
 
-    def process_attachment(self, file_id) -> Dict:
+    def download_file(self, file_id, upload=False) -> File:
         try:
             response = self.openai_client.files.with_raw_response.retrieve_content(file_id)
-            attachment = {
-                "file_id": file_id,
-                "content": response.content
-            }
-            return attachment
+            return File(
+                name=file_id,
+                filetype="image",
+                content=response.content
+            )
         except Exception as e:
             print(f"Error retrieving file {file_id}: {e}")
 
+    def upload_file_public(self, file: File):
+        res = file_upload_imgur(file.content)
+        file.url = res['url']
+        file.id = res['id']
+        return res
+
+    def parse_files_in_response(self, response, upload=True):
+        ids = re.findall(r'file-[^\n]+', response)
+        files = []
+        file_map = {}
+        for file_id in ids:
+            file = self.download_file(file_id)
+            if upload: self.upload_file_public(file)
+            files.append(file)
+            file_map[file_id] = file.url
+
+        if files:
+            agent_file_ids = self.add_files(files)
+            self.agent_attachments = files
+
+        # Replace file ids with urls in the response
+        response = re.sub(r'file-[^\n]+', lambda x: file_map[x.group()], response)
+
+        return response
+
     def chat_with_agent(self, text, file_ids=None):
         # TODO: all chats with agent start from scratch
-        print('!!!', file_ids)
         if file_ids:
+            print('Files sent to agent: ', file_ids)
             self.agent.add_files(file_ids)
             attachment_str = [{"file_id": file_id, "tools": [{"type": "code_interpreter"}]} for file_id in file_ids]
             message = {
@@ -141,37 +168,15 @@ class EmployeeOS(GPTAssistantAgent):
                 "attachments": attachment_str
             }
         else:
-            message = {
-                "role": "user",
-                "content": text
-            }
+            print('No files sent to agent.')
+            message = {"role": "user", "content": text}
 
-        response = self.initiate_chat(
-            recipient=self.agent,
-            message=message,
-            max_turns=1
-        )
+        response = self.initiate_chat(recipient=self.agent, message=message, max_turns=1)
 
-        # Parse the images in the response and add them to the employee files
-        # match on file id=file-EikHAXdU91bHlM9G1DVEpqo6\n "starts with file-" and ends at newline
-        ids = re.findall(r'file-[^\n]+', response.summary)
-        files = []
-        for file_id in ids:
-            attachment = self.process_attachment(file_id)
-            file = File(
-                name=file_id,
-                filetype="image",
-                content=attachment['content']
-            )
-            files.append(file)
+        summary = self.parse_files_in_response(response.summary)
+        return summary
 
-        if files:
-            agent_file_ids = self.add_files(files)
-            self.agent_attachments = files
-
-        return response.summary
-
-    def handle_message(self, message, sender=None, context=None) -> str:
+    def handle_message(self, message, sender=None, context=None) -> tuple([str, List[File]]):
         content = message.get('content')
         files = message.get('files', [])
 
@@ -181,19 +186,14 @@ class EmployeeOS(GPTAssistantAgent):
             file_str = f"Files successfully uploaded. Filenames: {', '.join(file_names)} with IDs: {', '.join(file_ids)}"
             attachment_str = [{"file_id": file_id, "tools": [{"type": "code_interpreter"}]} for file_id in file_ids]
 
-            messages = [
-                {
+            messages = [{
                     "role": "user",
                     "content": content,
                     # "content": file_str + '\n\n' + content
                     # "attachments": attachment_str
-                }
-            ]
+                }]
         else:
-            messages = [{
-                "role": "user",
-                "content": content
-            }]
+            messages = [{"role": "user", "content": content}]
 
         response = self.generate_reply(messages=messages, sender=sender, context=context)
 
