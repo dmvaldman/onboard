@@ -8,16 +8,8 @@ from dotenv import load_dotenv
 from agents.agent import MessageHandler
 from tools.employeeOS import ApplicationMessage
 from typing import List, Dict
-from dataclasses import dataclass, field
+from utils.classes import File
 
-
-@dataclass
-class File:
-    """Represents a file uploaded to Slack"""
-    url: str
-    name: str
-    filetype: str
-    content: bytes = field(repr=False)
 
 class SlackBot:
     def __init__(self):

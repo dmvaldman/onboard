@@ -6,9 +6,9 @@ import regex as re
 
 from openai import OpenAI
 from dotenv import load_dotenv
-from typing import List, Dict, Protocol
-from dataclasses import dataclass, field
+from typing import List, Dict
 from utils.imgur import file_upload as file_upload_imgur
+from utils.classes import File, Message, ApplicationMessage
 
 from agents.agent_autogen import Agent, File, MessageHandler
 from tools.notion import tool_specs as tool_specs_notion, tool_maps as tool_maps_notion
@@ -19,17 +19,6 @@ from autogen import ConversableAgent, UserProxyAgent
 load_dotenv('creds/.env', override=True)
 assistant_id = os.environ.get("ASSISTANT_ID", None)
 
-@dataclass
-class Message:
-    text: str
-    files: List[str] = field(default_factory=list)
-
-@dataclass
-class ApplicationMessage():
-    user: str
-    application: str
-    text: str
-    files: List[File] = field(default_factory=list)
 
 tool_spec_agent = [{
     "type": "function",

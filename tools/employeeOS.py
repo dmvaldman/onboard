@@ -5,26 +5,14 @@ import sys
 
 from openai import OpenAI
 from dotenv import load_dotenv
-from typing import List, Dict, Protocol
-from dataclasses import dataclass, field
+from typing import List, Dict
+from utils.classes import File, Message, ApplicationMessage
 
 from agents.agent import Agent, File, MessageHandler
 from tools.notion import tool_specs as tool_specs_notion, tool_maps as tool_maps_notion
 
 load_dotenv('creds/.env', override=True)
 
-
-@dataclass
-class Message:
-    text: str
-    files: List[str] = field(default_factory=list)
-
-@dataclass
-class ApplicationMessage():
-    user: str
-    application: str
-    text: str
-    files: List[File] = field(default_factory=list)
 
 tool_spec_agent = [{
     "type": "function",

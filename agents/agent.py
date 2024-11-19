@@ -5,22 +5,10 @@ import json
 from openai import OpenAI
 from dotenv import load_dotenv
 from typing import List, Dict, Protocol, Union
-from dataclasses import dataclass, field
+from utils.classes import File, Message
 
 load_dotenv('creds/.env', override=True)
 
-@dataclass
-class File:
-    id: str = None
-    url: str = None
-    name: str = None
-    filetype: str = None
-    content: bytes = field(repr=False)
-
-@dataclass
-class Message:
-    text: str
-    files: List[File] = field(default_factory=list)
 
 class MessageHandler(Protocol):
     def handle_message(self, message: Message) -> str:

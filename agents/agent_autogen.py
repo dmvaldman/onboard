@@ -6,22 +6,12 @@ import regex as re
 from openai import OpenAI
 from dotenv import load_dotenv
 from typing import List, Dict, Protocol, Union
-from dataclasses import dataclass, field
+from utils.classes import File, Message
 from autogen.agentchat.contrib.gpt_assistant_agent import GPTAssistantAgent
 
 load_dotenv('creds/.env', override=True)
 assistant_id = os.environ.get("ASSISTANT_ID", None)
 
-@dataclass
-class File:
-    name: str
-    filetype: str
-    content: bytes = field(repr=False)
-
-@dataclass
-class Message:
-    text: str
-    files: List[File] = field(default_factory=list)
 
 class MessageHandler(Protocol):
     def handle_message(self, message: Message) -> str:
