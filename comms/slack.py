@@ -75,21 +75,21 @@ class SlackBot:
 
         return files
 
-    def upload_files(self, files: List[Dict], client, max_retries=5) -> List[str]:
+    def upload_files(self, files: List[File], client, max_retries=5) -> List[str]:
         """Upload files to Slack and return URLs"""
         urls = []
         for file in files:
             try:
-                # Upload file
+                # Upload file to slack
                 upload_response = client.files_upload_v2(
-                    file=file["content"],
-                    filename=file["file_id"]
+                    file=file.content,
+                    filename=file.name
                 )
 
                 # Get initial file data
                 file_data = upload_response.get('file')
                 if not file_data:
-                    print(f"No file data received for {file['file_id']}")
+                    print(f"No file data received for {file.name}")
                     continue
 
                 # Wait for file to be fully processed
@@ -97,16 +97,16 @@ class SlackBot:
                 while not file_data.get('mimetype'):
                     attempts += 1
                     if attempts >= max_retries:
-                        print(f"Gave up waiting for file {file['file_id']} after {attempts} seconds")
+                        print(f"Gave up waiting for file {file.name} after {attempts} seconds")
                         break
 
                     time.sleep(1)
                     file_info = client.files_info(file=file_data['id'])
                     file_data = file_info.get('file')
-                    print(f"Waiting for file {file['file_id']}, attempt {attempts}")
+                    print(f"Waiting for file {file.name}, attempt {attempts}")
 
                 if file_data.get('mimetype'):
-                    print(f"File ready after {attempts}s: {file['file_id']}")
+                    print(f"File ready after {attempts}s: {file.name}")
                     urls.append(file_data['url_private'])
 
             except Exception as e:
@@ -140,7 +140,8 @@ class SlackBot:
             print(f"Error in message handler: {str(e)}")
 
         if images:
-            attachments = self.upload_files(images, client)
+            # attachments = self.upload_files(images, client)
+            attachments = [file.url for file in images]
         else:
             attachments = None
 
@@ -192,6 +193,10 @@ class SlackBot:
         )
 
     def _format_msg(self, text, attachments=None):
+        # remove lines with URLs that are in the attachments from the text
+        if attachments:
+            text = "\n".join([line for line in text.split("\n") if not any(url in line for url in attachments)])
+
         blocks = [
             {
                 "type": "section",
@@ -240,7 +245,8 @@ class SlackBot:
             print(f"Error in message handler: {str(e)}")
 
         if images:
-            attachments = self.upload_files(images, client)
+            # attachments = self.upload_files(images, client)
+            attachments = [file.url for file in images]
         else:
             attachments = None
 

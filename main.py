@@ -1,6 +1,10 @@
 from comms.slack import SlackBot
-from agents.agent import Agent, MessageHandler
-from tools.employeeOS import EmployeeOS
+
+# from agents.agent import Agent
+# from tools.employeeOS import EmployeeOS
+
+from agents.agent_autogen import Agent
+from tools.employeeOS_autogen import EmployeeOS
 
 
 if __name__ == "__main__":

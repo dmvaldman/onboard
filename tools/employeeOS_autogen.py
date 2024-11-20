@@ -74,14 +74,12 @@ class EmployeeOS(GPTAssistantAgent):
             verbose=True)
 
         self.agent = agent
-        self.agent_attachments = []
-
-        self.user_messages = {}
+        self.agent_attachments: List[str] = []
 
         tool_maps_agent = {"chat_with_agent": self.chat_with_agent}
         self.register_function(function_map=tool_maps_agent | tool_maps_notion)
 
-    def add_files(self, files: List[File]):
+    def add_files(self, files: List[File]) -> List[str]:
         """Upload files to the assistant"""
         # If files are File objects, upload them
         if isinstance(files[0], File):
@@ -138,7 +136,7 @@ class EmployeeOS(GPTAssistantAgent):
 
         if files:
             agent_file_ids = self.add_files(files)
-            self.agent_attachments = files
+            self.agent_attachments.extend(files)
 
         # Replace file ids with urls in the response
         response = re.sub(r'file-[^\n]+', lambda x: file_map[x.group()], response)
@@ -165,9 +163,11 @@ class EmployeeOS(GPTAssistantAgent):
         summary = self.parse_files_in_response(response.summary)
         return summary
 
-    def handle_message(self, message, sender=None, context=None) -> tuple([str, List[File]]):
-        content = message.get('content')
-        files = message.get('files', [])
+    def handle_message(self, message: ApplicationMessage) -> tuple([str, List[File]]):
+        content = message.text
+        files = message.files
+
+        self.agent_attachments = [] # Clear attachments
 
         if files:
             file_ids = self.add_files(files)
@@ -184,9 +184,9 @@ class EmployeeOS(GPTAssistantAgent):
         else:
             messages = [{"role": "user", "content": content}]
 
-        response = self.generate_reply(messages=messages, sender=sender, context=context)
+        response = self.generate_reply(messages=messages)
 
-        return response, self.agent_attachments
+        return response['content'], self.agent_attachments
 
 
 if __name__ == "__main__":
@@ -204,10 +204,10 @@ if __name__ == "__main__":
 
     files = [file]
 
-    message = {
-        "content": "Analyze this CSV and generate a pie chart of the product categories.",
-        "files": files
-    }
+    message = ApplicationMessage(
+        text="Analyze this CSV and generate a pie chart of the product categories.",
+        files=files
+    )
 
     # response = employee.handle_message(message, slack_user)
     response, files = employee.handle_message(message)
