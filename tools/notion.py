@@ -1,13 +1,17 @@
 import dotenv
 import os
-
+import requests
 import mistune
+from datetime import datetime, timedelta
+import threading
+import queue
+
+
 from notion_client import Client
+from agents.agent import MessageHandler
 
 
 dotenv.load_dotenv('creds/.env')
-
-notion = Client(auth=os.environ["NOTION_TOKEN"])
 
 class NotionRenderer:
     def __init__(self):
@@ -149,38 +153,43 @@ class NotionRenderer:
 
 renderer = NotionRenderer()
 
-def get_database_id():
-    # get the database id
-    results = notion.search(query="").get("results")
-    for result in results:
-        if result["object"] == "database":
-            return result["id"]
+class NotionBot():
+    def __init__(self):
+        self.client = Client(auth=os.environ["NOTION_TOKEN"])
+        self.db_id = self.get_database_id()
 
-def markdown_to_notion_blocks(markdown_text):
-    markdown = mistune.create_markdown(renderer='ast')
-    ast = markdown(markdown_text)
-    blocks = process_nodes(ast)
-    return blocks
+        self._message_handler: MessageHandler = None
 
-def create_page(title, content=""):
-    # Convert markdown to Notion blocks
-    blocks = renderer.render(content)
+    def get_database_id(self):
+        # get the database id
+        results = self.client.search(query="").get("results")
+        for result in results:
+            if result["object"] == "database":
+                return result["id"]
 
-    db_id = get_database_id()
+    def markdown_to_notion_blocks(self, markdown_text):
+        markdown = mistune.create_markdown(renderer='ast')
+        ast = markdown(markdown_text)
+        blocks = self.process_nodes(ast)
+        return blocks
 
-    # create a page and add it to the database
-    properties = {
-        "parent": { "database_id": db_id },
-        "properties": {
-            "title": {
-                "title": [{ "type": "text", "text": { "content": title } }]
-            }
-        },
-        "children": blocks
-    }
+    def create_page(self, title, content=""):
+        # Convert markdown to Notion blocks
+        blocks = renderer.render(content)
 
-    page = notion.pages.create(**properties)
-    return page
+        # create a page and add it to the database
+        properties = {
+            "parent": { "database_id": self.db_id },
+            "properties": {
+                "title": {
+                    "title": [{ "type": "text", "text": { "content": title } }]
+                }
+            },
+            "children": blocks
+        }
+
+        page = self.client.pages.create(**properties)
+        return page
 
 tool_specs = [
     {
@@ -208,16 +217,18 @@ tool_specs = [
 ]
 
 tool_maps = {
-    "create_page": create_page
+    "create_page": NotionBot.create_page
 }
 
 if __name__ == "__main__":
     title = "Test Page"
     content = "This is a test page created using the Notion API"
-    markdown_content = """![Product Categories Pie Chart](https://i.imgur.com/oLNji6e.png)
-    The analysis of the uploaded CSV file has been completed, and I've generated a pie chart showing the distribution of product categories. You can view the chart below:
+    markdown_content = """
+![Product Categories Pie Chart](https://i.imgur.com/oLNji6e.png)
+The analysis of the uploaded CSV file has been completed, and I've generated a pie chart showing the distribution of product categories. You can view the chart below:
 ![Product Categories Pie Chart](https://i.imgur.com/oLNji6e.png)
 If you need any further analysis or have additional questions, feel free to let me know!
 ![Product Categories Pie Chart](https://i.imgur.com/oLNji6e.png)"""
 
-    page = create_page(title, markdown_content)
+    notion_bot = NotionBot()
+    page = notion_bot.create_page(title, markdown_content)
