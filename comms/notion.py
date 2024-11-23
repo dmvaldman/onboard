@@ -136,11 +136,31 @@ class NotionBot(CommsBotBase):
             print(f"Error retrieving block content: {e}")
             return "Error retrieving content"
 
+    def get_page_title(self, page_id):
+        """Retrieve the title of a page"""
+        try:
+            page = self.client.pages.retrieve(page_id)
+            properties = page.get("properties", {})
+
+            # Assuming the title is stored in a property named "Title"
+            for prop_name, prop_value in properties.items():
+                if prop_value.get("type") == "title":
+                    title_parts = prop_value.get("title", '')
+                    # Concatenate all parts of the title
+                    title = ''.join([part.get("text", {}).get("content", '') for part in title_parts])
+                    return title
+            return ""
+        except Exception as e:
+            print(f"Error retrieving page title: {e}")
+            return "Error retrieving title"
+
     def get_page_text_content(self, page_id):
         """Retrieve the text content of a page by iterating over its blocks"""
         all_text_content = []
         has_more = True
         start_cursor = None
+
+        title = self.get_page_title(page_id)
 
         while has_more:
             response = self.client.blocks.children.list(block_id=page_id, start_cursor=start_cursor)
@@ -149,18 +169,21 @@ class NotionBot(CommsBotBase):
             start_cursor = response.get("next_cursor")
 
             for block in blocks:
-                if block["type"] == "image":
-                    image_data = block["image"]
-                    if image_data["type"] == "external":
-                        all_text_content.append(image_data["external"]["url"])
-                else:
-                    # Catch all for other block types with rich_text
-                    type = block["type"]
-                    rich_text_key = block.get(type, {}).get("rich_text", [])
-                    for rich_text in rich_text_key:
-                        all_text_content.append(rich_text["text"]["content"])
+                block_id = block["id"]
+                block_content = self.get_block_content(block_id)
+                all_text_content.append(f"Block ID: {block_id}\n{block_content}")
+                # if block["type"] == "image":
+                #     image_data = block["image"]
+                #     if image_data["type"] == "external":
+                #         all_text_content.append(image_data["external"]["url"])
+                # else:
+                #     # Catch all for other block types with rich_text
+                #     type = block["type"]
+                #     rich_text_key = block.get(type, {}).get("rich_text", [])
+                #     for rich_text in rich_text_key:
+                #         all_text_content.append(rich_text["text"]["content"])
 
-        return "\n".join(all_text_content)
+        return title + "\n\n".join(all_text_content)
 
     def get_page_comments_for_agent(self, page_id):
         comments = self.get_page_comments(page_id)
@@ -191,11 +214,13 @@ class NotionBot(CommsBotBase):
                     context_page = self.get_page_text_content(page_id)
 
                     comments_to_address.append({
+                        "page_id": page_id,
                         "sender_email": sender_email,
                         "id": comment_id,
                         "discussion_id": discussion_id,
+                        "block_id": anchor_block_id,
                         "content": content,
-                        "context_anchor": context_anchor,
+                        "context_block": context_anchor,
                         "context_page": context_page,
                     })
 
@@ -225,7 +250,7 @@ class NotionBot(CommsBotBase):
     def respond_to_comments(self, interval=300):
 
         def format_comment(comment):
-            text = f"<START CONTEXT>\n\nPage context: {comment['context_page']}\n Anchor text: {comment['context_anchor']}\n<END CONTEXT>\nComment: {comment['content']}"
+            text = f"Please address this comment on the Notion page {comment['page_id']}. To address the comment, update the relevant portions of the page and reply with a brief summary of the resolution (1-3 sentences). Below is relevant context followed by the user's comment.\n<START CONTEXT>\n\nPage context: {comment['context_page']}\nBlock ID: {comment['block_id']}\nBlock text: {comment['context_block']}\n<END CONTEXT>\nComment from {comment['sender_email']}: {comment['content']}"
             message = ApplicationMessage(
                 user=comment['sender_email'],
                 text=text,
@@ -241,6 +266,8 @@ class NotionBot(CommsBotBase):
                 print(f"Received comment: {comment}")
 
                 try:
+                    print(f"Processing comment: {comment['id']} from {comment['sender_email']} on page {comment['page_id']}")
+
                     # Process the comment
                     discussion_id = comment['discussion_id']
                     message = format_comment(comment)

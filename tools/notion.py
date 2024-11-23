@@ -191,6 +191,22 @@ class NotionBot():
         page = self.client.pages.create(**properties)
         return page
 
+    def update_block(self, block_id, content):
+        """Update a specific block with new content"""
+        # Render the content to get the appropriate block structure
+        blocks = renderer.render(content)
+
+        # Assuming the content is a single block, update the block
+        if blocks:
+            block = blocks[0]  # Get the first block from the rendered content
+            block_type = block['type']
+
+            # Update the block with the new content
+            self.client.blocks.update(
+                block_id=block_id,
+                **{block_type: block[block_type]}
+            )
+
 tool_specs = [
     {
         "type": "function",
@@ -213,11 +229,36 @@ tool_specs = [
                 "additionalProperties": False
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "update_block",
+            "description": "Update a specific block in a Notion page. Use this to modify Notion pages.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "block_id": {
+                        "type": "string",
+                        "description": "The ID of the block to update."
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "The new content of the block."
+                    }
+                },
+                "required": ["block_id", "content"],
+                "additionalProperties": False
+            }
+        }
     }
 ]
 
+notion_bot = NotionBot()
+
 tool_maps = {
-    "create_page": NotionBot.create_page
+    "create_page": notion_bot.create_page,
+    "update_block": notion_bot.update_block
 }
 
 if __name__ == "__main__":
@@ -230,5 +271,4 @@ The analysis of the uploaded CSV file has been completed, and I've generated a p
 If you need any further analysis or have additional questions, feel free to let me know!
 ![Product Categories Pie Chart](https://i.imgur.com/oLNji6e.png)"""
 
-    notion_bot = NotionBot()
     page = notion_bot.create_page(title, markdown_content)
