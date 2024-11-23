@@ -6,12 +6,11 @@ from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 from dotenv import load_dotenv
 from agents.agent import MessageHandler
-from tools.employeeOS import ApplicationMessage
 from typing import List, Dict
-from utils.classes import File
+from utils.classes import File, ApplicationMessage
+from comms.base import CommsBotBase
 
-
-class SlackBot:
+class SlackBot(CommsBotBase):
     def __init__(self):
         load_dotenv('creds/.env')
 
