@@ -11,7 +11,7 @@ import time
 from notion_client import Client
 from agents.agent import MessageHandler
 from comms.base import CommsBotBase
-from utils.classes import ApplicationMessage
+from utils.classes import ApplicationMessage, File
 
 
 dotenv.load_dotenv('creds/.env')
@@ -117,24 +117,27 @@ class NotionBot(CommsBotBase):
             block = self.client.blocks.retrieve(block_id)
             # Initialize an empty string to accumulate content
             content = ""
+            files = []
 
             # Extract the content based on block type
             if block["type"] == "image":
                 image_data = block["image"]
                 if image_data["type"] == "external":
-                    content = image_data["external"]["url"]
+                    url = image_data["external"]["url"]
                 elif image_data["type"] == "file":
-                    content = image_data["file"]["url"]
+                    url = image_data["file"]["url"]
+                file = File(name=url, filetype="image", url=url)
+                files.append(file)
             else:
                 # Catch-all for other block types with rich_text
                 rich_text_key = block.get(block["type"], {}).get("rich_text", [])
                 for rich_text in rich_text_key:
                     content += rich_text["text"]["content"]
 
-            return content
+            return content, files
         except Exception as e:
             print(f"Error retrieving block content: {e}")
-            return "Error retrieving content"
+            return "Error retrieving content", None
 
     def get_page_title(self, page_id):
         """Retrieve the title of a page"""
@@ -154,9 +157,11 @@ class NotionBot(CommsBotBase):
             print(f"Error retrieving page title: {e}")
             return "Error retrieving title"
 
-    def get_page_text_content(self, page_id):
+    def get_page_content(self, page_id):
         """Retrieve the text content of a page by iterating over its blocks"""
         all_text_content = []
+        all_images = []
+
         has_more = True
         start_cursor = None
 
@@ -170,22 +175,17 @@ class NotionBot(CommsBotBase):
 
             for block in blocks:
                 block_id = block["id"]
-                block_content = self.get_block_content(block_id)
-                all_text_content.append(f"Block ID: {block_id}\n{block_content}")
-                # if block["type"] == "image":
-                #     image_data = block["image"]
-                #     if image_data["type"] == "external":
-                #         all_text_content.append(image_data["external"]["url"])
-                # else:
-                #     # Catch all for other block types with rich_text
-                #     type = block["type"]
-                #     rich_text_key = block.get(type, {}).get("rich_text", [])
-                #     for rich_text in rich_text_key:
-                #         all_text_content.append(rich_text["text"]["content"])
+                block_content, block_images = self.get_block_content(block_id)
+                all_text_content.append(f"Block ID: {block_id}\nBlock Content: {block_content}")
+                all_images.extend(block_images)
 
-        return title + "\n\n".join(all_text_content)
+        text_content = "Title: " + title + "\n\n".join(all_text_content)
+        return text_content, all_images
 
-    def get_page_comments_for_agent(self, page_id):
+    def get_page_comments_for_agent(self, page):
+        page_id = page['id']
+        page_url = page['url']
+
         comments = self.get_page_comments(page_id)
         agent_name = self.message_handler.agent.name
 
@@ -210,10 +210,11 @@ class NotionBot(CommsBotBase):
                     sender_email = sender['person']['email']
                     anchor_block_id =comment['parent']['block_id']
 
-                    context_anchor = self.get_block_content(anchor_block_id)
-                    context_page = self.get_page_text_content(page_id)
+                    context_anchor, files_anchor = self.get_block_content(anchor_block_id)
+                    context_page, files_page = self.get_page_content(page_id)
 
                     comments_to_address.append({
+                        "page_url": page_url,
                         "page_id": page_id,
                         "sender_email": sender_email,
                         "id": comment_id,
@@ -222,6 +223,7 @@ class NotionBot(CommsBotBase):
                         "content": content,
                         "context_block": context_anchor,
                         "context_page": context_page,
+                        "files_page": files_anchor + files_page
                     })
 
                     grab_next_block = False
@@ -236,7 +238,7 @@ class NotionBot(CommsBotBase):
             print("Polling for new Notion comments...")
             pages = self.get_all_pages()
             for page in pages:
-                comments = self.get_page_comments_for_agent(page['id'])
+                comments = self.get_page_comments_for_agent(page)
                 for comment in comments:
                     comment_id = comment['id']
                     if comment_id not in self.processed_comment_ids:
@@ -248,17 +250,40 @@ class NotionBot(CommsBotBase):
             time.sleep(interval)
 
     def respond_to_comments(self, interval=300):
+        def download_files(files):
+            headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'
+            }
+            for file in files:
+                try:
+                    response = requests.get(file.url, headers=headers)
+                    response.raise_for_status()  # Raise an error for bad responses
+                    file.content = response.content
+                except requests.exceptions.RequestException as e:
+                    print(f"Error downloading file: {e}")
+            return files
 
         def format_comment(comment):
-            text = f"Please address this comment on the Notion page {comment['page_id']}. To address the comment, update the relevant portions of the page and reply with a brief summary of the resolution (1-3 sentences). Below is relevant context followed by the user's comment.\n<START CONTEXT>\n\nPage context: {comment['context_page']}\nBlock ID: {comment['block_id']}\nBlock text: {comment['context_block']}\n<END CONTEXT>\nComment from {comment['sender_email']}: {comment['content']}"
-            message = ApplicationMessage(
+            text = (
+                f"Please address this comment on the Notion page with ID: {comment['page_id']} at URL {comment['page_url']}. "
+                "To address the comment, update the relevant blocks on the page and reply with a brief summary "
+                "(1-3 sentences) which will be used to reply to this comment. Context of the comment is provided below. We provide the full text of the page, the block which is the anchor of this comment, and the user info.\n\n"
+                "<START CONTEXT>\n\n"
+                f"<START PAGE CONTEXT>\n\n{comment['context_page']}\n\n<END PAGE CONTEXT>\n\n"
+                f"<START ANCHOR BLOCK CONTEXT>\n\nBLOCK ID: {comment['block_id']}\n{comment['context_block']}\n\n<END ANCHOR BLOCK CONTEXT>\n\n"
+                "<END CONTEXT>\n\n"
+                f"Comment from {comment['sender_email']}: {comment['content']}"
+            )
+
+            files = comment['files_page']
+            files = download_files(files)
+
+            return ApplicationMessage(
                 user=comment['sender_email'],
                 text=text,
                 application="Notion",
-                files=None
+                files=files
             )
-            return message
-
 
         while True:
             while not self.comment_queue.empty():
