@@ -18,8 +18,8 @@ dotenv.load_dotenv('creds/.env')
 
 class NotionBot(CommsBotBase):
     def __init__(self):
+        super().__init__()
         self.client = Client(auth=os.environ["NOTION_TOKEN"])
-        self._message_handler: MessageHandler = None
         self.comment_queue = queue.Queue()
         self.processed_comment_ids = set()
 

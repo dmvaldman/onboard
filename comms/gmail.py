@@ -19,7 +19,7 @@ load_dotenv('creds/.env')
 
 class GmailBot(CommsBotBase):
     def __init__(self):
-        self._message_handler: MessageHandler = None
+        super().__init__()
         self.email_queue = queue.Queue()
 
         # load json file

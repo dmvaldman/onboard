@@ -10,10 +10,11 @@ from typing import List, Dict
 from utils.classes import File, ApplicationMessage
 from comms.base import CommsBotBase
 
+load_dotenv('creds/.env')
+
 class SlackBot(CommsBotBase):
     def __init__(self):
-        load_dotenv('creds/.env')
-
+        super().__init__()
         self.app = App(
             token=os.getenv("SLACK_BOT_TOKEN"),
             signing_secret=os.getenv("SLACK_SIGNING_SECRET")
@@ -23,8 +24,6 @@ class SlackBot(CommsBotBase):
 
         # Register event handlers
         self._register_handlers()
-
-        self._message_handler: MessageHandler = None
 
     def _register_handlers(self):
         """Register all event handlers with Slack Bolt"""
@@ -170,18 +169,6 @@ class SlackBot(CommsBotBase):
         - See all messages in channels I'm in
         - Use /bothelp for this help message
         """)
-
-    @property
-    def message_handler(self) -> MessageHandler:
-        if self._message_handler is None:
-            raise ValueError("No message handler set")
-        return self._message_handler
-
-    @message_handler.setter
-    def message_handler(self, handler: MessageHandler):
-        if not hasattr(handler, 'handle_message'):
-            raise ValueError("Handler must implement handle_message")
-        self._message_handler = handler
 
     def _send_ack(self, event, client):
         # Respond with "watching" emoji
