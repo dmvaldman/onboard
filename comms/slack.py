@@ -132,16 +132,13 @@ class SlackBot(CommsBotBase):
             files=files
         )
 
+        attachments = None
         try:
             text, images = self.message_handler.handle_message(message)
+            if images:
+                attachments = [file.url for file in images]
         except Exception as e:
             print(f"Error in message handler: {str(e)}")
-
-        if images:
-            # attachments = self.upload_files(images, client)
-            attachments = [file.url for file in images]
-        else:
-            attachments = None
 
         formatted_msg = self._format_msg(text, attachments=attachments)
 
@@ -225,16 +222,13 @@ class SlackBot(CommsBotBase):
             files=files
         )
 
+        attachments = None
         try:
             text, images = self.message_handler.handle_message(message)
+            if images:
+                attachments = [file.url for file in images]
         except Exception as e:
             print(f"Error in message handler: {str(e)}")
-
-        if images:
-            # attachments = self.upload_files(images, client)
-            attachments = [file.url for file in images]
-        else:
-            attachments = None
 
         formatted_msg = self._format_msg(text, attachments=attachments)
 
