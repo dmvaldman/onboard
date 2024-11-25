@@ -7,6 +7,9 @@ from comms.notion import NotionBot
 from agents.agent_autogen import Agent
 from tools.employeeOS_autogen import EmployeeOS
 
+from utils.delete import delete_assistants_and_files
+delete_assistants_and_files()
+
 # Agent
 agent = Agent(
     "AI Analyst",
