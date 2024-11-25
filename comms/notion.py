@@ -126,6 +126,7 @@ class NotionBot(CommsBotBase):
                     url = image_data["external"]["url"]
                 elif image_data["type"] == "file":
                     url = image_data["file"]["url"]
+                content = url
                 file = File(name=url, filetype="image", url=url)
                 files.append(file)
             else:
@@ -199,34 +200,42 @@ class NotionBot(CommsBotBase):
             discussion_id = comment['discussion_id']
             comment_id = comment['id']
             created_by_user_id = comment['created_by']['id']
-            grab_next_block = False
+            anchor_block_id = comment['parent']['block_id']
+
+            has_mention = False
+            content = ''
             for block in comment['rich_text']:
-                if block['type'] == "mention":
-                    if block['mention']['user']['name'] == agent_name:
-                        grab_next_block = True
-                elif grab_next_block:
-                    content = block['text']['content']
-                    sender = self.client.users.retrieve(created_by_user_id)
-                    sender_email = sender['person']['email']
-                    anchor_block_id =comment['parent']['block_id']
+                if block['type'] == "mention" and block['mention']['user']['name'] == agent_name:
+                    has_mention = True
 
-                    context_anchor, files_anchor = self.get_block_content(anchor_block_id)
-                    context_page, files_page = self.get_page_content(page_id)
+                if block['type'] == "text":
+                    content += block['text']['content']
+                elif block['type'] == "mention":
+                    continue
+                else:
+                    # TODO: Handle other block types
+                    print(f"Received comment block type: {block['type']} which we do not yet support")
 
-                    comments_to_address.append({
-                        "page_url": page_url,
-                        "page_id": page_id,
-                        "sender_email": sender_email,
-                        "id": comment_id,
-                        "discussion_id": discussion_id,
-                        "block_id": anchor_block_id,
-                        "content": content,
-                        "context_block": context_anchor,
-                        "context_page": context_page,
-                        "files_page": files_anchor + files_page
-                    })
+            if has_mention:
+                sender = self.client.users.retrieve(created_by_user_id)
+                sender_email = sender['person']['email']
 
-                    grab_next_block = False
+                context_anchor, files_anchor = self.get_block_content(anchor_block_id)
+                context_page, files_page = self.get_page_content(page_id)
+
+                comments_to_address.append({
+                    "page_url": page_url,
+                    "page_id": page_id,
+                    "sender_email": sender_email,
+                    "id": comment_id,
+                    "discussion_id": discussion_id,
+                    "block_id": anchor_block_id,
+                    "content": content,
+                    "context_block": context_anchor,
+                    "context_page": context_page,
+                    "files_block": files_anchor,
+                    "files_page": files_page
+                })
 
         return comments_to_address
 
@@ -275,7 +284,8 @@ class NotionBot(CommsBotBase):
                 f"Comment from {comment['sender_email']}: {comment['content']}"
             )
 
-            files = comment['files_page']
+
+            files = comment['files_block'] if comment['files_block'] else comment['files_page']
             files = download_files(files)
 
             return ApplicationMessage(
