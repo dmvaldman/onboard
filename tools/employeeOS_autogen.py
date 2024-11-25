@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 from typing import List, Dict
 from utils.imgur import file_upload as file_upload_imgur
 from utils.classes import File, Message, ApplicationMessage
+from dataclasses import dataclass
 
 from agents.agent_autogen import Agent, File, MessageHandler
 from tools.notion import tool_specs as tool_specs_notion, tool_maps as tool_maps_notion
@@ -19,6 +20,22 @@ from autogen import ConversableAgent, UserProxyAgent
 load_dotenv('creds/.env', override=True)
 assistant_id = os.environ.get("ASSISTANT_ID", None)
 
+# Wrapper for a user from an email address to use as the sender of msgs
+@dataclass
+class Sender:
+    name: str
+    silent: bool = False
+
+    def __str__(self):
+        return self.name
+
+    def __hash__(self):
+        return hash(self.name)
+
+    def __eq__(self, other):
+        if isinstance(other, Sender):
+            return self.name == other.name
+        return False
 
 tool_spec_agent = [{
     "type": "function",
@@ -67,14 +84,15 @@ class EmployeeOS(GPTAssistantAgent):
             name=name,
             instructions=f"""You are a generalist employee.
                 You have access to various communication tools like Notion and Slack.
-                You have access to an AI Analyst for any analytical work.
-                Delegate any analytical work to your AI Analyst.""",
+                When you receive communication from coworkers, they will begin with the application they were sent from.
+                You have access to an AI Analyst for any analytical work. Delegate any analytical work to them and summarize their work.""",
             llm_config=llm_config,
             assistant_config=assistant_config,
-            verbose=True)
+            verbose=False)
 
         self.agent = agent
         self.agent_attachments: List[str] = []
+        self.user_messages = {}
 
         tool_maps_agent = {"chat_with_agent": self.chat_with_agent}
         self.register_function(function_map=tool_maps_agent | tool_maps_notion)
@@ -144,7 +162,6 @@ class EmployeeOS(GPTAssistantAgent):
         return response
 
     def chat_with_agent(self, text, file_ids=None):
-        # TODO: all chats with agent start from scratch
         if file_ids:
             print('Files sent to agent: ', file_ids)
             self.agent.add_files(file_ids)
@@ -158,41 +175,56 @@ class EmployeeOS(GPTAssistantAgent):
             print('No files sent to agent.')
             message = {"role": "user", "content": text}
 
-        response = self.initiate_chat(recipient=self.agent, message=message, max_turns=1)
+        response = self.initiate_chat(
+            recipient=self.agent,
+            message=message,
+            max_turns=1,
+            clear_history=False)
 
         summary = self.parse_files_in_response(response.summary)
+
         return summary
 
     def handle_message(self, message: ApplicationMessage) -> tuple([str, List[File]]):
+        user = message.user
         content = message.text
         files = message.files
+        application = message.application
 
         self.agent_attachments = [] # Clear attachments
+
+        sender = Sender(name=user)
 
         if files:
             file_ids = self.add_files(files)
             file_names = [file.name for file in files]
             file_str = f"Files successfully uploaded. Filenames: {', '.join(file_names)} with IDs: {', '.join(file_ids)}"
-            attachment_str = [{"file_id": file_id, "tools": [{"type": "code_interpreter"}]} for file_id in file_ids]
-
-            messages = [{
-                    "role": "user",
-                    "content": content,
-                    # "content": file_str + '\n\n' + content
-                    # "attachments": attachment_str
-                }]
+            attachments = [{"file_id": file_id, "tools": [{"type": "code_interpreter"}]} for file_id in file_ids]
         else:
-            messages = [{"role": "user", "content": content}]
+            attachments = None
 
-        response = self.generate_reply(messages=messages)
+        content = f"Application: {application}\n" + content
+
+        message = {
+            "role": "user",
+            "content": content,
+            "attachments": attachments
+        }
+
+        # Monkeypatching library code to build up internal chat histories unique to sender
+        self._process_received_message(message, sender, silent=False)
+        response = self.generate_reply(messages=self.chat_messages[sender])
+        self._append_oai_message(response, "assistant", sender, is_sending=True)
 
         return response['content'], self.agent_attachments
 
 
 if __name__ == "__main__":
+    # import autogen
+    # logging_session_id = autogen.runtime_logging.start(logger_type="file", config={"filename": f"{os.path.basename(__file__)}.log"})
+
     agent = Agent("AI Analyst", "I am an senior data analyst here to help you answer questions.")
     employee = EmployeeOS(agent)
-    sender = "Dave"
 
     # Create ApplicationMessage with file attachment from assets/dataset.csv
     with open("assets/dataset.csv", "rb") as f:
@@ -202,13 +234,21 @@ if __name__ == "__main__":
             content=f.read()
         )
 
-    files = [file]
-
     message = ApplicationMessage(
+        user="Dave",
+        application="Slack",
         text="Analyze this CSV and generate a pie chart of the product categories.",
-        files=files
+        files=[file]
     )
 
-    # response = employee.handle_message(message, slack_user)
     response, files = employee.handle_message(message)
-    print('\n-----------------\n\nFinal Response:\n\n', response)
+
+    message = ApplicationMessage(
+        user="Dave",
+        application="Slack",
+        text="The labels are way too cluttered and overlapping. it’s hard to read. can we fix this?"
+    )
+
+    response, files = employee.handle_message(message)
+
+    print(response)
