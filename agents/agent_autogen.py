@@ -18,9 +18,9 @@ class MessageHandler(Protocol):
         pass
 
 class Agent(GPTAssistantAgent):
-    def __init__(self, name, instructions):
+    def __init__(self, name, instructions, model="gpt-4o-mini"):
         llm_config = {
-            "model": "gpt-4o-mini",
+            "model": model,
             "api_key": os.getenv('OPENAI_API_KEY')
         }
 

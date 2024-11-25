@@ -1,3 +1,5 @@
+import time
+
 from comms.slack import SlackBot
 from comms.notion import NotionBot
 
@@ -13,7 +15,8 @@ delete_assistants_and_files()
 # Agent
 agent = Agent(
     "AI Analyst",
-    "I am an senior data analyst here to help you answer questions. My responses may use markdown, but no other syntax, like latex, mathml, etc."
+    "I am an senior data analyst here to help you answer questions. My responses may use markdown, but no other syntax, like latex, mathml, etc.",
+    model="gpt-4o"
 )
 employee = EmployeeOS(agent)
 
@@ -26,3 +29,6 @@ notionbot.message_handler = employee
 
 slackbot.start()
 notionbot.start()
+
+while True:
+    time.sleep(1)

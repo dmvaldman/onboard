@@ -1,6 +1,7 @@
 import os
 import requests
 import time
+import threading
 
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
@@ -9,6 +10,7 @@ from agents.agent import MessageHandler
 from typing import List, Dict
 from utils.classes import File, ApplicationMessage
 from comms.base import CommsBotBase
+
 
 load_dotenv('creds/.env')
 
@@ -258,9 +260,16 @@ class SlackBot(CommsBotBase):
     def start(self):
         """Start the bot"""
         handler = SocketModeHandler(self.app, os.environ["SLACK_APP_TOKEN"])
-        handler.start()
+
+        # Run the handler in a separate thread
+        handler_thread = threading.Thread(target=handler.start)
+        handler_thread.daemon = True
+        handler_thread.start()
 
 # Usage
 if __name__ == "__main__":
     bot = SlackBot()
     bot.start()
+
+    while True:
+        time.sleep(1)

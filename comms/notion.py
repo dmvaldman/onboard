@@ -324,9 +324,6 @@ class NotionBot(CommsBotBase):
         response_thread.daemon = True
         response_thread.start()
 
-        # Keep the main thread alive
-        while True:
-            time.sleep(1)
 
 if __name__ == "__main__":
     from agents.agent_autogen import Agent
@@ -342,3 +339,7 @@ if __name__ == "__main__":
 
     notionbot.message_handler = employee
     notionbot.start(interval=100)
+
+    # Keep the main thread alive
+    while True:
+        time.sleep(1)
