@@ -123,7 +123,8 @@ class NotionRenderer:
         }
 
     def create_image_block(self, node):
-        return {
+        alt_text = node.get('alt', '')  # Extract alt text from the node
+        image_block = {
             "object": "block",
             "type": "image",
             "image": {
@@ -133,6 +134,17 @@ class NotionRenderer:
                 }
             }
         }
+
+        if alt_text:
+            # Add a caption to the image block
+            image_block["image"]["caption"] = [{
+                "type": "text",
+                "text": {
+                    "content": alt_text
+                }
+            }]
+
+        return image_block
 
     def create_code_block(self, node):
         code = node['text']
@@ -194,18 +206,48 @@ class NotionBot():
     def update_block(self, block_id, content):
         """Update a specific block with new content"""
         # Render the content to get the appropriate block structure
-        blocks = renderer.render(content)
+        # get block type of the existing block
+        block = self.client.blocks.retrieve(block_id=block_id)
+        block_type = block['type']
+
+        new_blocks = renderer.render(content)
 
         # Assuming the content is a single block, update the block
-        if blocks:
-            block = blocks[0]  # Get the first block from the rendered content
-            block_type = block['type']
+        if new_blocks:
+            new_block = new_blocks[0]  # Get the first block from the rendered content
+            new_block_type = new_block['type']
 
-            # Update the block with the new content
-            self.client.blocks.update(
-                block_id=block_id,
-                **{block_type: block[block_type]}
+        # Update the block with the new content
+        try:
+            if block_type == new_block_type:
+                self.client.blocks.update(
+                    block_id=block_id,
+                    **{block_type: block[block_type]}
+                )
+            else:
+                # If the block type has changed, replace the block
+                self.replace_block(block_id, block['parent']['id'], content)
+        except Exception as e:
+            print(f"Error updating block {block_id}: {str(e)}")
+
+    def replace_block(self, block_id, parent_id, content):
+        try:
+            # Delete the existing block
+            self.client.blocks.delete(block_id=block_id)
+
+            # Create a new text block
+            blocks = renderer.render(content)
+
+            # Assuming you have the parent block or page ID where this block should be added
+            parent_id = "your_parent_block_or_page_id"
+
+            # Add the new block to the parent
+            self.client.blocks.children.append(
+                block_id=parent_id,
+                children=blocks
             )
+        except Exception as e:
+            print(f"Error replacing block {block_id} with parent {parent_id}: {e}")
 
 tool_specs = [
     {
