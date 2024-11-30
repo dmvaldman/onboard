@@ -130,6 +130,7 @@ class NotionBot(CommsBotBase):
                 file = File(name=url, filetype="image", url=url)
                 files.append(file)
             else:
+                # TODO: Handle other file types
                 # Catch-all for other block types with rich_text
                 rich_text_key = block.get(block["type"], {}).get("rich_text", [])
                 for rich_text in rich_text_key:
